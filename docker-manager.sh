@@ -239,20 +239,89 @@ remove_dangling_images() {
     print_success "Dangling images removed"
 }
 
+# Build volume usage map (volume -> container,image)
+# Sets global associative arrays VOLUME_CONTAINERS and VOLUME_IMAGES
+declare -A VOLUME_CONTAINERS
+declare -A VOLUME_IMAGES
+
+build_volume_map() {
+    VOLUME_CONTAINERS=()
+    VOLUME_IMAGES=()
+
+    # Get all container info in one pass
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local container_name=$(echo "$line" | cut -d'|' -f1)
+        local container_image=$(echo "$line" | cut -d'|' -f2)
+        local mounts=$(echo "$line" | cut -d'|' -f3-)
+
+        # Parse each volume mount
+        for vol in $mounts; do
+            [[ -z "$vol" ]] && continue
+            if [[ -n "${VOLUME_CONTAINERS[$vol]}" ]]; then
+                VOLUME_CONTAINERS[$vol]="${VOLUME_CONTAINERS[$vol]}, $container_name"
+            else
+                VOLUME_CONTAINERS[$vol]="$container_name"
+                VOLUME_IMAGES[$vol]="$container_image"
+            fi
+        done
+    done < <(docker ps -a --format '{{.Names}}|{{.Image}}|{{range .Mounts}}{{.Name}} {{end}}' 2>/dev/null)
+}
+
+# Get containers using a volume (uses cached map)
+get_volume_usage() {
+    local volume_name="$1"
+    echo "${VOLUME_CONTAINERS[$volume_name]:-}"
+}
+
+# Get image that created a volume (uses cached map)
+get_volume_image() {
+    local volume_name="$1"
+    echo "${VOLUME_IMAGES[$volume_name]:-}"
+}
+
 # List volumes
 list_volumes() {
     print_header "Docker Volumes"
 
     local count=$(docker volume ls -q | wc -l)
-    echo -e "${BOLD}Summary:${NC} $count total\n"
+    local unused=$(docker volume ls -qf dangling=true | wc -l)
+    echo -e "${BOLD}Summary:${NC} $count total / $unused unused\n"
 
     if [[ $count -eq 0 ]]; then
         print_info "No volumes found"
         return
     fi
 
-    docker volume ls --format "table {{.Name}}\t{{.Driver}}\t{{.Scope}}" | \
-        sed '1s/.*/\x1b[1m&\x1b[0m/'
+    # Build volume usage map (single pass through containers)
+    build_volume_map
+
+    # Print header
+    printf "${BOLD}%-35s %-10s %-25s %-30s${NC}\n" "NAME" "DRIVER" "USED BY" "IMAGE"
+    echo "─────────────────────────────────────────────────────────────────────────────────────────────────────"
+
+    # List each volume with usage info
+    while IFS= read -r volume_name; do
+        [[ -z "$volume_name" ]] && continue
+
+        local driver=$(docker volume inspect "$volume_name" --format '{{.Driver}}' 2>/dev/null)
+        local containers=$(get_volume_usage "$volume_name")
+        local image=$(get_volume_image "$volume_name")
+
+        # Truncate long names
+        local display_name="${volume_name:0:33}"
+        local display_containers="${containers:0:23}"
+        local display_image="${image:0:28}"
+
+        # Color unused volumes yellow
+        if [[ -z "$containers" ]]; then
+            printf "${YELLOW}%-35s${NC} %-10s ${YELLOW}%-25s${NC} %-30s\n" \
+                "$display_name" "$driver" "(unused)" "$display_image"
+        else
+            printf "%-35s %-10s ${GREEN}%-25s${NC} %-30s\n" \
+                "$display_name" "$driver" "$display_containers" "$display_image"
+        fi
+    done < <(docker volume ls -q 2>/dev/null)
 }
 
 # Remove all unused volumes
@@ -535,9 +604,16 @@ load_items() {
             done < <(docker images --format '{{.ID}}|{{.Repository}}:{{.Tag}}|{{.Size}}|{{.CreatedSince}}' 2>/dev/null)
             ;;
         volumes)
-            while IFS= read -r line; do
-                [[ -n "$line" ]] && ITEMS+=("$line")
-            done < <(docker volume ls --format '{{.Name}}|{{.Driver}}|{{.Scope}}' 2>/dev/null)
+            # Build volume usage map first (single pass through containers)
+            build_volume_map
+            while IFS= read -r volume_name; do
+                [[ -z "$volume_name" ]] && continue
+                local driver=$(docker volume inspect "$volume_name" --format '{{.Driver}}' 2>/dev/null)
+                local containers=$(get_volume_usage "$volume_name")
+                local image=$(get_volume_image "$volume_name")
+                [[ -z "$containers" ]] && containers="(unused)"
+                ITEMS+=("$volume_name|$driver|$containers|$image")
+            done < <(docker volume ls -q 2>/dev/null)
             ;;
         networks)
             while IFS= read -r line; do
@@ -567,7 +643,7 @@ draw_items() {
             printf "  ${BOLD}%-14s %-35s %-12s %-15s${NC}\n" "ID" "REPOSITORY:TAG" "SIZE" "CREATED"
             ;;
         volumes)
-            printf "  ${BOLD}%-40s %-15s %-15s${NC}\n" "NAME" "DRIVER" "SCOPE"
+            printf "  ${BOLD}%-30s %-10s %-20s %-20s${NC}\n" "NAME" "DRIVER" "USED BY" "IMAGE"
             ;;
         networks)
             printf "  ${BOLD}%-14s %-25s %-15s %-15s${NC}\n" "ID" "NAME" "DRIVER" "SCOPE"
@@ -615,8 +691,14 @@ draw_items() {
                     "${fields[0]:0:12}" "${fields[1]:0:33}" "${fields[2]:0:10}" "${fields[3]:0:13}"
                 ;;
             volumes)
-                printf "${prefix}%-40s %-15s %-15s${suffix}\n" \
-                    "${fields[0]:0:38}" "${fields[1]:0:13}" "${fields[2]:0:13}"
+                local usage_color="${NC}"
+                if [[ "${fields[2]}" == "(unused)" ]]; then
+                    usage_color="${YELLOW}"
+                else
+                    usage_color="${GREEN}"
+                fi
+                printf "${prefix}%-30s %-10s ${usage_color}%-20s${NC} %-20s${suffix}\n" \
+                    "${fields[0]:0:28}" "${fields[1]:0:8}" "${fields[2]:0:18}" "${fields[3]:0:18}"
                 ;;
             networks)
                 printf "${prefix}%-14s %-25s %-15s %-15s${suffix}\n" \

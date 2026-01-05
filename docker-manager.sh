@@ -298,7 +298,7 @@ list_volumes() {
 
     # Print header
     printf "${BOLD}%-35s %-10s %-25s %-30s${NC}\n" "NAME" "DRIVER" "USED BY" "IMAGE"
-    echo "─────────────────────────────────────────────────────────────────────────────────────────────────────"
+    echo "-----------------------------------------------------------------------------------------------------"
 
     # List each volume with usage info
     while IFS= read -r volume_name; do
@@ -545,7 +545,7 @@ clear_screen() {
 # Draw a horizontal line
 draw_line() {
     local width=${1:-$(tput cols)}
-    printf '%*s\n' "$width" '' | tr ' ' '─'
+    printf '%*s\n' "$width" '' | tr ' ' '-'
 }
 
 # Get terminal dimensions
@@ -561,11 +561,11 @@ draw_header() {
     local images=$(docker images -q 2>/dev/null | wc -l)
     local volumes=$(docker volume ls -q 2>/dev/null | wc -l)
 
-    echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}${CYAN}║${NC}                         ${BOLD}Docker Manager - Interactive${NC}                         ${BOLD}${CYAN}║${NC}"
-    echo -e "${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
-    printf "${BOLD}${CYAN}║${NC}  Containers: ${GREEN}%d${NC} running / %d total  │  Images: %d  │  Volumes: %d          ${BOLD}${CYAN}║${NC}\n" "$running" "$total" "$images" "$volumes"
-    echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${BOLD}${CYAN}+------------------------------------------------------------------------------+${NC}"
+    echo -e "${BOLD}${CYAN}|${NC}                         ${BOLD}Docker Manager - Interactive${NC}                         ${BOLD}${CYAN}|${NC}"
+    echo -e "${BOLD}${CYAN}+------------------------------------------------------------------------------+${NC}"
+    printf "${BOLD}${CYAN}|${NC}  Containers: ${GREEN}%d${NC} running / %d total  |  Images: %d  |  Volumes: %d          ${BOLD}${CYAN}|${NC}\n" "$running" "$total" "$images" "$volumes"
+    echo -e "${BOLD}${CYAN}+------------------------------------------------------------------------------+${NC}"
 }
 
 # Draw view tabs
